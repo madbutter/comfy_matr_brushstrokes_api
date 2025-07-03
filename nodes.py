@@ -66,31 +66,49 @@ class StrokeOptimRequest:
             response.raise_for_status()
             status = response.json()
             
+            # --- Debugging: Print full API status ---
+            print(f"API Status for job {job_id}: {status}")
+            # --- End Debugging ---
+            
             if status["status"] == "COMPLETED":
-                # Assuming the final result is in the last element of the output list
+                if not status.get("output"):
+                    raise RuntimeError(f"Job {job_id} completed but no output found.")
+                
                 final_output = status["output"][-1]
+                
+                # --- Robustness: Check for keys before accessing ---
+                if "svg" not in final_output:
+                    raise RuntimeError(f"Job {job_id} completed but 'svg' key missing in final output: {final_output}")
+                # Corrected key from 'img' to 'image'
+                if "image" not in final_output:
+                    raise RuntimeError(f"Job {job_id} completed but 'image' key missing in final output: {final_output}")
+                # --- End Robustness ---
+
                 svg_str = final_output["svg"]
-                img_base64 = final_output["img"]
+                img_base64 = final_output["image"] # Corrected key
                 
                 # Decode base64 image to PIL Image
                 img_bytes = base64.b64decode(img_base64)
                 img = Image.open(io.BytesIO(img_bytes))
                 
-                yield {"step": "final", "is_final": True, "svg": svg_str, "img": img, "loss": final_output.get("loss")}
+                yield {"step": "final", "is_final": True, "svg": svg_str, "image": img, "loss": final_output.get("loss")} # Corrected key
                 break
             elif status["status"] == "FAILED":
                 raise RuntimeError(f"Job failed: {status.get('error', 'Unknown error')}")
             elif status["status"] == "IN_PROGRESS" and status.get("output"):
                 # Yield intermediate results if available
                 for output_item in status["output"]:
-                    if "svg" in output_item and "img" in output_item:
+                    # --- Robustness: Check for keys in intermediate outputs too ---
+                    if "svg" in output_item and "image" in output_item: # Corrected key
                         svg_str = output_item["svg"]
-                        img_base64 = output_item["img"]
+                        img_base64 = output_item["image"] # Corrected key
                         
                         img_bytes = base64.b64decode(img_base64)
                         img = Image.open(io.BytesIO(img_bytes))
                         
-                        yield {"step": output_item.get("step"), "is_final": False, "svg": svg_str, "img": img, "loss": output_item.get("loss")}
+                        yield {"step": output_item.get("step"), "is_final": False, "svg": svg_str, "image": img, "loss": output_item.get("loss")} # Corrected key
+                    # else:
+                    #     print(f"Skipping intermediate output item due to missing 'svg' or 'image': {output_item}") # Corrected key
             
             time.sleep(5) # Poll every 5 seconds
 
@@ -176,7 +194,7 @@ class MatrBrushstrokesNode:
             for result in request_obj.poll(base_url, api_key, job_id):
                 if result["is_final"]:
                     final_svg_str = result["svg"]
-                    final_img_pil = result["img"]
+                    final_img_pil = result["image"] # Corrected key
                     print(f"Job {job_id} completed. Final loss: {result.get('loss')}")
                 else:
                     print(f"Job {job_id} in progress, step: {result.get('step')}, loss: {result.get('loss')}")
