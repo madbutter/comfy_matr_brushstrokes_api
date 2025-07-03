@@ -132,7 +132,7 @@ class MatrBrushstrokesNode:
                 "length_scale": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "print_freq": ("INT", {"default": 50, "min": 1, "max": 1000}),
                 "scale_by_y": ("BOOLEAN", {"default": True}),
-                "init": (["random", "content"], {"default": "random"}),
+                "init": (["slic", "random"], {"default": "slic"}),
             },
             "optional": {
                 "use_comet": ("BOOLEAN", {"default": False}), # Added from client_example.py
