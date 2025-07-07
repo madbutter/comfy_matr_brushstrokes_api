@@ -128,7 +128,7 @@ class MatrBrushstrokesNode:
                 "optimizer_lr_stroke": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.001}),
                 "optimizer_color_lr": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 1.0, "step": 0.0001}),
                 "num_steps_stroke": ("INT", {"default": 100, "min": 1, "max": 1000, "step": 10}),
-                "num_strokes": ("INT", {"default": 3500, "min": 1, "max": 10000"step": 10}),
+                "num_strokes": ("INT", {"default": 3500, "min": 1, "max": 10000,"step": 10}),
                 "width_scale": ("FLOAT", {"default": 3.0, "min": 0.0, "max": 100.0, "step": 0.1}),
                 "length_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1}),
                 "print_freq": ("INT", {"default": 50, "min": 1, "max": 1000}),
