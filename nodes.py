@@ -57,7 +57,7 @@ class StrokeOptimRequest:
         response.raise_for_status()
         return response.json()["id"]
 
-    def poll(self, base_url, api_key, job_id):
+    def poll(self, base_url, api_key, job_id, verbose_output=False): # Added verbose_output
         headers = {
             "Authorization": f"Bearer {api_key}"
         }
@@ -66,8 +66,9 @@ class StrokeOptimRequest:
             response.raise_for_status()
             status = response.json()
             
-            # --- Debugging: Print full API status ---
-            print(f"API Status for job {job_id}: {status}")
+            # --- Debugging: Print full API status (conditional) ---
+            if verbose_output:
+                print(f"API Status for job {job_id}: {status}")
             # --- End Debugging ---
             
             if status["status"] == "COMPLETED":
@@ -79,19 +80,18 @@ class StrokeOptimRequest:
                 # --- Robustness: Check for keys before accessing ---
                 if "svg" not in final_output:
                     raise RuntimeError(f"Job {job_id} completed but 'svg' key missing in final output: {final_output}")
-                # Corrected key from 'img' to 'image'
                 if "image" not in final_output:
                     raise RuntimeError(f"Job {job_id} completed but 'image' key missing in final output: {final_output}")
                 # --- End Robustness ---
 
                 svg_str = final_output["svg"]
-                img_base64 = final_output["image"] # Corrected key
+                img_base64 = final_output["image"]
                 
                 # Decode base64 image to PIL Image
                 img_bytes = base64.b64decode(img_base64)
                 img = Image.open(io.BytesIO(img_bytes))
                 
-                yield {"step": "final", "is_final": True, "svg": svg_str, "image": img, "loss": final_output.get("loss")} # Corrected key
+                yield {"step": "final", "is_final": True, "svg": svg_str, "image": img, "loss": final_output.get("loss")}
                 break
             elif status["status"] == "FAILED":
                 raise RuntimeError(f"Job failed: {status.get('error', 'Unknown error')}")
@@ -99,16 +99,17 @@ class StrokeOptimRequest:
                 # Yield intermediate results if available
                 for output_item in status["output"]:
                     # --- Robustness: Check for keys in intermediate outputs too ---
-                    if "svg" in output_item and "image" in output_item: # Corrected key
+                    if "svg" in output_item and "image" in output_item:
                         svg_str = output_item["svg"]
-                        img_base64 = output_item["image"] # Corrected key
+                        img_base64 = output_item["image"]
                         
                         img_bytes = base64.b64decode(img_base64)
                         img = Image.open(io.BytesIO(img_bytes))
                         
-                        yield {"step": output_item.get("step"), "is_final": False, "svg": svg_str, "image": img, "loss": output_item.get("loss")} # Corrected key
+                        yield {"step": output_item.get("step"), "is_final": False, "svg": svg_str, "image": img, "loss": output_item.get("loss")}
                     # else:
-                    #     print(f"Skipping intermediate output item due to missing 'svg' or 'image': {output_item}") # Corrected key
+                    #     if verbose_output: # Only print if verbose_output is true
+                    #         print(f"Skipping intermediate output item due to missing 'svg' or 'image': {output_item}")
             
             time.sleep(5) # Poll every 5 seconds
 
@@ -132,10 +133,11 @@ class MatrBrushstrokesNode:
                 "length_scale": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 10.0, "step": 0.01}),
                 "print_freq": ("INT", {"default": 50, "min": 1, "max": 1000}),
                 "scale_by_y": ("BOOLEAN", {"default": True}),
-                "init": (["slic", "random"], {"default": "slic"}),
+                "init": (["random", "slic"], {"default": "slic"}), # Changed options and default
+                "verbose_output": ("BOOLEAN", {"default": False}), # Added verbose_output flag
             },
             "optional": {
-                "use_comet": ("BOOLEAN", {"default": False}), # Added from client_example.py
+                "use_comet": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -148,7 +150,7 @@ class MatrBrushstrokesNode:
                                         optimizer_lr_stroke, optimizer_color_lr,
                                         num_steps_stroke, num_strokes,
                                         width_scale, length_scale, print_freq,
-                                        scale_by_y, init, use_comet=False):
+                                        scale_by_y, init, verbose_output, use_comet=False): # Added verbose_output
         
         if not api_key:
             raise ValueError("API Key is required.")
@@ -191,10 +193,10 @@ class MatrBrushstrokesNode:
             # 4. Poll for job completion
             final_svg_str = None
             final_img_pil = None
-            for result in request_obj.poll(base_url, api_key, job_id):
+            for result in request_obj.poll(base_url, api_key, job_id, verbose_output): # Pass verbose_output
                 if result["is_final"]:
                     final_svg_str = result["svg"]
-                    final_img_pil = result["image"] # Corrected key
+                    final_img_pil = result["image"]
                     print(f"Job {job_id} completed. Final loss: {result.get('loss')}")
                 else:
                     print(f"Job {job_id} in progress, step: {result.get('step')}, loss: {result.get('loss')}")
