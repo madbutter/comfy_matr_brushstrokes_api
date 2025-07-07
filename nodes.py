@@ -126,14 +126,14 @@ class MatrBrushstrokesNode:
                 "api_key": ("STRING", {"multiline": False, "default": os.environ.get("MATR_RUNPOD_API_KEY", "")}),
                 "base_url": ("STRING", {"multiline": False, "default": "https://api.runpod.ai/v2/vt0tvhzcqug7zu"}),
                 "optimizer_lr_stroke": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.001}),
-                "optimizer_color_lr": ("FLOAT", {"default": 0.001, "min": 0.0, "max": 1.0, "step": 0.0001}),
-                "num_steps_stroke": ("INT", {"default": 5001, "min": 1, "max": 100000, "step": 100}),
-                "num_strokes": ("INT", {"default": 250, "min": 1, "max": 1000}),
-                "width_scale": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 100.0, "step": 0.1}),
-                "length_scale": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 10.0, "step": 0.01}),
+                "optimizer_color_lr": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 1.0, "step": 0.0001}),
+                "num_steps_stroke": ("INT", {"default": 100, "min": 1, "max": 1000, "step": 10}),
+                "num_strokes": ("INT", {"default": 3500, "min": 1, "max": 10000"step": 10}),
+                "width_scale": ("FLOAT", {"default": 3.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "length_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.1}),
                 "print_freq": ("INT", {"default": 50, "min": 1, "max": 1000}),
-                "scale_by_y": ("BOOLEAN", {"default": True}),
-                "init": (["random", "slic"], {"default": "slic"}), # Changed options and default
+                "scale_by_y": ("BOOLEAN", {"default": False}),
+                "init": (["slic", "random"], {"default": "slic"}), # Changed options and default
                 "verbose_output": ("BOOLEAN", {"default": False}), # Added verbose_output flag
             },
             "optional": {
