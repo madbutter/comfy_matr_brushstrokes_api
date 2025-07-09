@@ -6,14 +6,18 @@ import base64
 import requests
 import os
 import time
-import gzip
-import json
+import gzip # Keep import for robustness, but won't be used for SVG decompression
+import json # Added for potential future use, good practice for API responses
 
-# --- Extracted from client_example.py and request.py analysis ---
+# --- Extracted from client_example.py and handler.py analysis ---
 class RequestParams:
     def __init__(self, optimizer_lr_stroke, optimizer_color_lr, num_steps_stroke,
                  num_strokes, width_scale, length_scale, print_freq,
-                 scale_by_y, init):
+                 scale_by_y, init,
+                 # Added parameters from handler.py analysis
+                 img_size, samples_per_curve, brushes_per_pixel, canvas_color,
+                 style_weight_stroke, content_weight_stroke, tv_weight_stroke,
+                 tv_loss_k, curv_weight, optimize_width):
         self.optimizer_lr_stroke = optimizer_lr_stroke
         self.optimizer_color_lr = optimizer_color_lr
         self.num_steps_stroke = num_steps_stroke
@@ -23,6 +27,17 @@ class RequestParams:
         self.print_freq = print_freq
         self.scale_by_y = scale_by_y
         self.init = init
+        # Added parameters
+        self.img_size = img_size
+        self.samples_per_curve = samples_per_curve
+        self.brushes_per_pixel = brushes_per_pixel
+        self.canvas_color = canvas_color
+        self.style_weight_stroke = style_weight_stroke
+        self.content_weight_stroke = content_weight_stroke
+        self.tv_weight_stroke = tv_weight_stroke
+        self.tv_loss_k = tv_loss_k
+        self.curv_weight = curv_weight
+        self.optimize_width = optimize_width
 
     def to_dict(self):
         return {
@@ -35,26 +50,27 @@ class RequestParams:
             "print_freq": self.print_freq,
             "scale_by_y": self.scale_by_y,
             "init": self.init,
-            # These parameters are now omitted from the node's inputs,
-            # but are included here with their default values as per request.py
-            "img_size": 512,
-            "samples_per_curve": 10,
-            "brushes_per_pixel": 20,
-            "canvas_color": "black",
-            "style_weight_stroke": 0.0,
-            "content_weight_stroke": 10.0,
-            "tv_weight_stroke": 0.008,
-            "tv_loss_k": 1,
-            "curv_weight": 2.0,
-            "optimize_width": False
+            # Added parameters
+            "img_size": self.img_size,
+            "samples_per_curve": self.samples_per_curve,
+            "brushes_per_pixel": self.brushes_per_pixel,
+            "canvas_color": self.canvas_color,
+            "style_weight_stroke": self.style_weight_stroke,
+            "content_weight_stroke": self.content_weight_stroke,
+            "tv_weight_stroke": self.tv_weight_stroke,
+            "tv_loss_k": self.tv_loss_k,
+            "curv_weight": self.curv_weight,
+            "optimize_width": self.optimize_width
         }
 
 class StrokeOptimRequest:
-    def __init__(self, content_img, params):
+    def __init__(self, content_img, params, use_comet=False, style_img=None, experiment_name=None, experiment_tags=None): # Added style_img, experiment_name, experiment_tags
         self.content_img = content_img
         self.params = params
-        # use_comet, style_img, experiment_name, experiment_tags are omitted, API will use its defaults
-        # or they are not needed for basic functionality
+        self.use_comet = use_comet
+        self.style_img = style_img # Added
+        self.experiment_name = experiment_name # Added
+        self.experiment_tags = experiment_tags # Added
 
     def submit(self, base_url, api_key):
         headers = {
@@ -65,10 +81,19 @@ class StrokeOptimRequest:
             "input": {
                 "content_img": self.content_img,
                 "params": self.params.to_dict(),
-                # use_comet is omitted, API will use its default
+                "use_comet": self.use_comet
             }
         }
-        # style_img, experiment_name, experiment_tags are omitted from payload
+        if self.style_img: # Conditionally add style_img
+            payload["input"]["style_img"] = self.style_img
+        if self.experiment_name: # Conditionally add experiment_name
+            payload["input"]["experiment_name"] = self.experiment_name
+        if self.experiment_tags: # Conditionally add experiment_tags
+            payload["input"]["experiment_tags"] = self.experiment_tags
+
+        # --- Debugging: Print full API request payload (conditional) ---
+        print(f"API Request Payload: {json.dumps(payload, indent=2)}")
+        # --- End Debugging ---
 
         response = requests.post(f"{base_url}/run", headers=headers, json=payload)
         response.raise_for_status()
@@ -84,7 +109,7 @@ class StrokeOptimRequest:
             status = response.json()
             
             if verbose_output:
-                print(f"API Status for job {job_id}: {json.dumps(status, indent=2)}")
+                print(f"API Status for job {job_id}: {json.dumps(status, indent=2)}") # Pretty print JSON
             
             if status["status"] == "COMPLETED":
                 if not status.get("output"):
@@ -132,20 +157,33 @@ class MatrBrushstrokesNode:
                 "image": ("IMAGE",),
                 "api_key": ("STRING", {"multiline": False, "default": os.environ.get("MATR_RUNPOD_API_KEY", "")}),
                 "base_url": ("STRING", {"multiline": False, "default": "https://api.runpod.ai/v2/vt0tvhzcqug7zu"}),
-                "optimizer_lr_stroke": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.001}),
-                "optimizer_color_lr": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 1.0, "step": 0.0001}),
-                "num_steps_stroke": ("INT", {"default": 100, "min": 1, "max": 1000}),
-                "num_strokes": ("INT", {"default": 3500, "min": 1, "max": 6000}),
+                "optimizer_lr_stroke": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "optimizer_color_lr": ("FLOAT", {"default": 0.01, "min": 0.0, "max": 1.0, "step": 0.001}),
+                "num_steps_stroke": ("INT", {"default": 100, "min": 1, "max": 1000, "step": 1}),
+                "num_strokes": ("INT", {"default": 3500, "min": 1, "max": 10000}),
                 "width_scale": ("FLOAT", {"default": 3.0, "min": 0.0, "max": 100.0, "step": 0.1}),
-                "length_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 10.0, "step": 0.01}),
-                "print_freq": ("INT", {"default": 10, "min": 1, "max": 1000}),
+                "length_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "print_freq": ("INT", {"default": 100, "min": 1, "max": 1000}),
                 "scale_by_y": ("BOOLEAN", {"default": False}),
                 "init": (["random", "slic"], {"default": "slic"}),
                 "verbose_output": ("BOOLEAN", {"default": False}),
+                # Added parameters from handler.py analysis
+                "img_size": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 64}), # Common image size
+                "samples_per_curve": ("INT", {"default": 10, "min": 1, "max": 100}),
+                "brushes_per_pixel": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "canvas_color": ("STRING", {"default": "black"}), # Or a list of colors, or RGB tuple
+                "style_weight_stroke": ("FLOAT", {"default": 100.0, "min": 0.0, "max": 1000.0, "step": 1.0}),
+                "content_weight_stroke": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step": 0.1}),
+                "tv_weight_stroke": ("FLOAT", {"default": 0.001, "min": 0.0, "max": 1.0, "step": 0.0001}),
+                "tv_loss_k": ("INT", {"default": 100, "min": 1, "max": 1000}),
+                "curv_weight": ("FLOAT", {"default": 0.001, "min": 0.0, "max": 1.0, "step": 0.0001}),
+                "optimize_width": ("BOOLEAN", {"default": True}),
             },
             "optional": {
-                # All optional parameters removed as per user request.
-                # The API will use its own defaults for these.
+                "style_image": ("IMAGE",), # Added style_image input
+                "experiment_name": ("STRING", {"multiline": False, "default": ""}), # Added
+                "experiment_tags": ("STRING", {"multiline": False, "default": ""}), # Added (comma-separated)
+                "use_comet": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -158,23 +196,39 @@ class MatrBrushstrokesNode:
                                         optimizer_lr_stroke, optimizer_color_lr,
                                         num_steps_stroke, num_strokes,
                                         width_scale, length_scale, print_freq,
-                                        scale_by_y, init, verbose_output):
+                                        scale_by_y, init, verbose_output,
+                                        # Added parameters
+                                        img_size, samples_per_curve, brushes_per_pixel, canvas_color,
+                                        style_weight_stroke, content_weight_stroke, tv_weight_stroke,
+                                        tv_loss_k, curv_weight, optimize_width,
+                                        style_image=None, experiment_name=None, experiment_tags=None, use_comet=False):
         
         if not api_key:
             raise ValueError("API Key is required.")
         if not base_url:
             raise ValueError("Base URL is required.")
 
-        i = 255. * image.cpu().numpy().squeeze()
-        img_pil = Image.fromarray(np.uint8(i))
+        # 1. Convert ComfyUI IMAGE (torch.Tensor) to base64
+        # Assuming image is a batch of 1, and in [0,1] float32
+        i = 255. * image.cpu().numpy().squeeze() # Remove batch dim, scale to 0-255
+        img_pil = Image.fromarray(np.uint8(i)) # Convert to PIL Image
         
         buffered = io.BytesIO()
-        img_pil.save(buffered, format="PNG")
+        img_pil.save(buffered, format="PNG") # Save as PNG to buffer
         content_img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-        # Removed style_image, experiment_name, experiment_tags, use_comet from function signature and logic
-        # as they are no longer node inputs. API will use its defaults.
+        style_img_base64 = None
+        if style_image is not None and style_image.numel() > 0:
+            s_i = 255. * style_image.cpu().numpy().squeeze()
+            style_img_pil = Image.fromarray(np.uint8(s_i))
+            style_buffered = io.BytesIO()
+            style_img_pil.save(style_buffered, format="PNG")
+            style_img_base64 = base64.b64encode(style_buffered.getvalue()).decode('utf-8')
 
+        # Convert comma-separated tags string to a list
+        tags_list = [tag.strip() for tag in experiment_tags.split(',') if tag.strip()] if experiment_tags else None
+
+        # 2. Construct RequestParams
         params = RequestParams(
             optimizer_lr_stroke=optimizer_lr_stroke,
             optimizer_color_lr=optimizer_color_lr,
@@ -184,14 +238,28 @@ class MatrBrushstrokesNode:
             length_scale=length_scale,
             print_freq=print_freq,
             scale_by_y=scale_by_y,
-            init=init
+            init=init,
+            # Added parameters
+            img_size=img_size,
+            samples_per_curve=samples_per_curve,
+            brushes_per_pixel=brushes_per_pixel,
+            canvas_color=canvas_color,
+            style_weight_stroke=style_weight_stroke,
+            content_weight_stroke=content_weight_stroke,
+            tv_weight_stroke=tv_weight_stroke,
+            tv_loss_k=tv_loss_k,
+            curv_weight=curv_weight,
+            optimize_width=optimize_width
         )
 
+        # 3. Create StrokeOptimRequest and submit job
         request_obj = StrokeOptimRequest(
             content_img=content_img_base64,
-            params=params
-            # Removed optional parameters from here
-            # use_comet, style_img, experiment_name, experiment_tags
+            params=params,
+            use_comet=use_comet,
+            style_img=style_img_base64, # Pass style_img
+            experiment_name=experiment_name, # Pass experiment_name
+            experiment_tags=tags_list # Pass experiment_tags as list
         )
 
         try:
@@ -228,6 +296,7 @@ class MatrBrushstrokesNode:
 # --- New Helper Node to Decode and Save SVG ---
 class SaveDecodedSVGNode:
     def __init__(self):
+        # Get ComfyUI's base directory (assuming node is in custom_nodes/your_node_folder)
         comfy_base_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", ".."))
         self.output_dir = os.path.join(comfy_base_dir, "output")
         os.makedirs(self.output_dir, exist_ok=True)
@@ -252,6 +321,7 @@ class SaveDecodedSVGNode:
             
             svg_xml_string = None
             
+            # Try Gzip decompression first
             try:
                 decompressed_bytes = gzip.decompress(decoded_bytes)
                 svg_xml_string = decompressed_bytes.decode('utf-8')
@@ -288,5 +358,5 @@ NODE_CLASS_MAPPINGS = {
 # A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MatrBrushstrokes": "Matr Brushstrokes API",
-    "SaveDecodedSVG": "Matr Save Decoded SVG", # Changed display name
+    "SaveDecodedSVG": "Save Decoded SVG",
 }
