@@ -128,22 +128,33 @@ class StrokeOptimRequest:
             
             time.sleep(5)
 
-# --- Helper function to convert ComfyUI mask to base64 ---
-def mask_to_base64(mask_tensor):
+# --- Helper function to convert ComfyUI image to mask base64 ---
+def image_to_mask_base64(image_tensor):
     """
-    Convert ComfyUI mask tensor to base64 encoded PNG image.
-    ComfyUI masks are typically single channel float tensors with values 0-1.
-    We convert them to a grayscale image where white (255) = mask area, black (0) = background.
+    Convert ComfyUI image tensor to base64 encoded PNG mask image.
+    Accepts any image type (1-bit, 8-bit grayscale, 24-bit RGB) and converts to grayscale mask.
+    White areas (255) = mask area, black areas (0) = background.
     """
-    # Convert from tensor to numpy
-    mask_np = mask_tensor.cpu().numpy().squeeze()
+    # Convert from tensor to numpy - image_tensor is typically [batch, height, width, channels]
+    img_np = image_tensor.cpu().numpy().squeeze()  # Remove batch dimension
     
-    # Ensure values are in 0-1 range and convert to 0-255
-    mask_np = np.clip(mask_np, 0, 1) * 255
-    mask_np = mask_np.astype(np.uint8)
+    # Handle different input formats
+    if len(img_np.shape) == 3 and img_np.shape[2] == 3:  # RGB image
+        # Convert RGB to grayscale using standard luminance formula
+        img_np = 0.299 * img_np[:, :, 0] + 0.587 * img_np[:, :, 1] + 0.114 * img_np[:, :, 2]
+    elif len(img_np.shape) == 3 and img_np.shape[2] == 4:  # RGBA image
+        # Convert RGB to grayscale, ignore alpha channel
+        img_np = 0.299 * img_np[:, :, 0] + 0.587 * img_np[:, :, 1] + 0.114 * img_np[:, :, 2]
+    elif len(img_np.shape) == 3 and img_np.shape[2] == 1:  # Single channel with extra dim
+        img_np = img_np.squeeze()
+    # If len(img_np.shape) == 2, it's already grayscale
+    
+    # Ensure values are in 0-1 range then convert to 0-255
+    img_np = np.clip(img_np, 0, 1) * 255
+    img_np = img_np.astype(np.uint8)
     
     # Convert to PIL Image (grayscale)
-    mask_pil = Image.fromarray(mask_np, mode='L')
+    mask_pil = Image.fromarray(img_np, mode='L')
     
     # Convert to base64
     buffered = io.BytesIO()
@@ -176,7 +187,7 @@ class MatrBrushstrokesNode:
                 "verbose_output": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                "mask": ("MASK",),  # New optional mask input
+                "mask": ("IMAGE",),  # New optional mask input - accepts any image type
             }
         }
 
@@ -211,7 +222,7 @@ class MatrBrushstrokesNode:
         if mask is not None:
             print("Mask detected - enabling transparency mode")
             mask_alpha = True
-            mask_img_base64 = mask_to_base64(mask)
+            mask_img_base64 = image_to_mask_base64(mask)
 
         # Create parameters with mask_alpha setting
         params = RequestParams(
@@ -260,12 +271,17 @@ class MatrBrushstrokesNode:
             
             # Handle both RGB and RGBA outputs (RGBA when mask_alpha=True)
             if img_np.shape[2] == 4: # RGBA
-                if not mask_alpha:
+                if mask_alpha:
+                    print("Received RGBA output with transparency - keeping alpha channel")
+                    # Keep RGBA for transparent output
+                else:
                     # If we unexpectedly got RGBA without mask, convert to RGB
+                    print("Received unexpected RGBA output - converting to RGB")
                     img_np = img_np[..., :3]
-                # Otherwise keep RGBA for transparent output
             elif img_np.shape[2] == 3: # RGB
-                pass # Keep as RGB
+                if mask_alpha:
+                    print("Expected RGBA with transparency but got RGB - this may indicate API processing issue")
+                # Keep as RGB
             
             img_tensor = torch.from_numpy(img_np)[None,] # Add batch dim
 
