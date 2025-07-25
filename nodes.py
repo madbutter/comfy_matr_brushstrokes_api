@@ -13,7 +13,7 @@ import json
 class RequestParams:
     def __init__(self, optimizer_lr_stroke, optimizer_color_lr, num_steps_stroke,
                  num_strokes, width_scale, length_scale, print_freq,
-                 scale_by_y, init):
+                 scale_by_y, init, mask_alpha=False):
         self.optimizer_lr_stroke = optimizer_lr_stroke
         self.optimizer_color_lr = optimizer_color_lr
         self.num_steps_stroke = num_steps_stroke
@@ -23,6 +23,7 @@ class RequestParams:
         self.print_freq = print_freq
         self.scale_by_y = scale_by_y
         self.init = init
+        self.mask_alpha = mask_alpha  # New parameter for mask support
 
     def to_dict(self):
         return {
@@ -35,6 +36,7 @@ class RequestParams:
             "print_freq": self.print_freq,
             "scale_by_y": self.scale_by_y,
             "init": self.init,
+            "mask_alpha": self.mask_alpha,  # Include mask_alpha in API payload
             # These parameters are now omitted from the node's inputs,
             # but are included here with their default values as per request.py
             "img_size": 512,
@@ -50,9 +52,10 @@ class RequestParams:
         }
 
 class StrokeOptimRequest:
-    def __init__(self, content_img, params):
+    def __init__(self, content_img, params, mask_img=None):
         self.content_img = content_img
         self.params = params
+        self.mask_img = mask_img  # New mask image parameter
         # use_comet, style_img, experiment_name, experiment_tags are omitted, API will use its defaults
         # or they are not needed for basic functionality
 
@@ -68,6 +71,11 @@ class StrokeOptimRequest:
                 # use_comet is omitted, API will use its default
             }
         }
+        
+        # Add mask_img to payload if provided
+        if self.mask_img is not None:
+            payload["input"]["mask_img"] = self.mask_img
+        
         # style_img, experiment_name, experiment_tags are omitted from payload
 
         response = requests.post(f"{base_url}/run", headers=headers, json=payload)
@@ -120,6 +128,30 @@ class StrokeOptimRequest:
             
             time.sleep(5)
 
+# --- Helper function to convert ComfyUI mask to base64 ---
+def mask_to_base64(mask_tensor):
+    """
+    Convert ComfyUI mask tensor to base64 encoded PNG image.
+    ComfyUI masks are typically single channel float tensors with values 0-1.
+    We convert them to a grayscale image where white (255) = mask area, black (0) = background.
+    """
+    # Convert from tensor to numpy
+    mask_np = mask_tensor.cpu().numpy().squeeze()
+    
+    # Ensure values are in 0-1 range and convert to 0-255
+    mask_np = np.clip(mask_np, 0, 1) * 255
+    mask_np = mask_np.astype(np.uint8)
+    
+    # Convert to PIL Image (grayscale)
+    mask_pil = Image.fromarray(mask_np, mode='L')
+    
+    # Convert to base64
+    buffered = io.BytesIO()
+    mask_pil.save(buffered, format="PNG")
+    mask_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    
+    return mask_base64
+
 # --- ComfyUI Node Definition ---
 class MatrBrushstrokesNode:
     def __init__(self):
@@ -144,8 +176,7 @@ class MatrBrushstrokesNode:
                 "verbose_output": ("BOOLEAN", {"default": False}),
             },
             "optional": {
-                # All optional parameters removed as per user request.
-                # The API will use its own defaults for these.
+                "mask": ("MASK",),  # New optional mask input
             }
         }
 
@@ -158,13 +189,14 @@ class MatrBrushstrokesNode:
                                         optimizer_lr_stroke, optimizer_color_lr,
                                         num_steps_stroke, num_strokes,
                                         width_scale, length_scale, print_freq,
-                                        scale_by_y, init, verbose_output):
+                                        scale_by_y, init, verbose_output, mask=None):
         
         if not api_key:
             raise ValueError("API Key is required.")
         if not base_url:
             raise ValueError("Base URL is required.")
 
+        # Convert main image to base64
         i = 255. * image.cpu().numpy().squeeze()
         img_pil = Image.fromarray(np.uint8(i))
         
@@ -172,9 +204,16 @@ class MatrBrushstrokesNode:
         img_pil.save(buffered, format="PNG")
         content_img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
 
-        # Removed style_image, experiment_name, experiment_tags, use_comet from function signature and logic
-        # as they are no longer node inputs. API will use its defaults.
+        # Handle mask input
+        mask_img_base64 = None
+        mask_alpha = False
+        
+        if mask is not None:
+            print("Mask detected - enabling transparency mode")
+            mask_alpha = True
+            mask_img_base64 = mask_to_base64(mask)
 
+        # Create parameters with mask_alpha setting
         params = RequestParams(
             optimizer_lr_stroke=optimizer_lr_stroke,
             optimizer_color_lr=optimizer_color_lr,
@@ -184,19 +223,22 @@ class MatrBrushstrokesNode:
             length_scale=length_scale,
             print_freq=print_freq,
             scale_by_y=scale_by_y,
-            init=init
+            init=init,
+            mask_alpha=mask_alpha  # Automatically set based on mask presence
         )
 
+        # Create request with optional mask
         request_obj = StrokeOptimRequest(
             content_img=content_img_base64,
-            params=params
-            # Removed optional parameters from here
-            # use_comet, style_img, experiment_name, experiment_tags
+            params=params,
+            mask_img=mask_img_base64  # Will be None if no mask provided
         )
 
         try:
             job_id = request_obj.submit(base_url, api_key)
             print(f"Submitted job with ID: {job_id}")
+            if mask_alpha:
+                print("Job submitted with mask - output will have transparency")
 
             final_svg_str = None
             final_img_pil = None
@@ -211,11 +253,20 @@ class MatrBrushstrokesNode:
             if final_svg_str is None or final_img_pil is None:
                 raise RuntimeError("Failed to retrieve final results from the API.")
 
+            # Convert PIL image to tensor
             img_np = np.array(final_img_pil).astype(np.float32) / 255.0
             if len(img_np.shape) == 2: # Grayscale
                 img_np = np.expand_dims(img_np, axis=-1) # Add channel dim
-            if img_np.shape[2] == 4: # RGBA to RGB
-                img_np = img_np[..., :3]
+            
+            # Handle both RGB and RGBA outputs (RGBA when mask_alpha=True)
+            if img_np.shape[2] == 4: # RGBA
+                if not mask_alpha:
+                    # If we unexpectedly got RGBA without mask, convert to RGB
+                    img_np = img_np[..., :3]
+                # Otherwise keep RGBA for transparent output
+            elif img_np.shape[2] == 3: # RGB
+                pass # Keep as RGB
+            
             img_tensor = torch.from_numpy(img_np)[None,] # Add batch dim
 
             return (final_svg_str, img_tensor,)
@@ -288,5 +339,5 @@ NODE_CLASS_MAPPINGS = {
 # A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MatrBrushstrokes": "Matr Brushstrokes API",
-    "SaveDecodedSVG": "Matr Save Decoded SVG", # Changed display name
+    "SaveDecodedSVG": "Matr Save Decoded SVG",
 }
